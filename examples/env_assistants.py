@@ -1,3 +1,5 @@
+import re
+
 import fire
 
 from metagpt.actions import Action
@@ -71,6 +73,14 @@ class GenerateSql(Action):
 
 class ExecuteSql(Action):
     async def run(self, context):
+        sql_content = next((c.content for c in context if '```sql' in c.content), None)
+        if sql_content:
+            pattern = r'```sql(.*?)```'
+            sql_content = re.findall(pattern, sql_content, re.DOTALL)
+
+        if not sql_content:
+            return "不存在 SQL，无法执行。"
+
         return ("根据SQL查询到的数据如下：\n"
                 """water_temperature,datetime
 12.3,2024-06-04 00:00:00
@@ -103,20 +113,38 @@ class EnvSqlDataAssistant(Role):
     name: str = '周sq'
     profile: str = "环境质量数据库查询助手"
     goal: str = "根据用户需求生成数据库查询SQL，再执行获得数据"
+    constraints: str = ("1. 如果 Context 不存在SQL，选择 GenerateSql 进行生成 SQL\n"
+                        "2. 如果 Context 中已经存在可执行 SQL，选择 ExecuteSql")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self._set_react_mode(RoleReactMode.REACT, 2)
+        self._watch([AssignEnvSqlDataAssistant])
         self.set_actions([GenerateSql, ExecuteSql])
 
 
-class AssignEnvSqlDataAssistant(Role):
+class AssignEnvSqlDataAssistant(Action):
     async def run(self, context: str):
         return '使用SQL数据助手查询数据'
+
+
+class GenerateChart(Action):
+    async def run(self, context):
+        return ("根据用户问题，生成的图表如下：\n"
+                "https://chart.bovo.com/1222232")
 
 
 class EnvChartAssistant(Role):
     name: str = '周图镖'
     profile: str = "环境质量图表生成助手"
+    constraints: str = ("1. 如果没有数据需要先从 AssignEnvSqlDataAssistant 查询得到数据。 "
+                        "2. 再调用 GenerateChart 生成图表。 "
+                        "3. 如果已经有数据，请直接选择 GenerateChart")
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._watch([AssignChartAssistant])
+        self.set_actions([AssignEnvSqlDataAssistant, GenerateChart])
 
 
 class QueryEmbeddedEnvBusinessData(Action):
@@ -192,6 +220,12 @@ class AssignKnowledgeAssistant(Action):
         return '使用环境质量知识助手回答问题'
 
 
+class AssignChartAssistant(Action):
+
+    async def run(self, context: str):
+        return '使用环境质量图表生成助手回答问题'
+
+
 class AssignEnvBusinessAssistant(Action):
 
     async def run(self, context: str):
@@ -209,14 +243,17 @@ class TaskManager(Role):
     profile: str = "任务分配者"
     goal: str = '把用户输入的问题分解给对应的角色来处理。'
     constraints: str = ('1. 用户问的是常规的环保类知识，请选择 AssignKnowledgeAssistant\n'
-                        '2. 用户问的是某个特定的河流，监测站，统计，图表等信息，请选择 AssignEnvBusinessAssistant\n'
-                        '3. Context 中包含了 Human 问题的答案，请选择 AssignFinalAnswer')
+                        '2. 用户问的是某个特定的河流，监测站，统计等信息，请选择 AssignEnvBusinessAssistant\n'
+                        '3. Context 中包含了 Human 问题的答案，请选择 AssignFinalAnswer\n'
+                        '4. 如果是图表类的问题，请选择 AssignChartAssistant')
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # self._set_react_mode(RoleReactMode.REACT, 3)
-        self._watch([AssignQuestionToTaskManager, GenerateEnvKnowledgeAnswer, GenerateEnvBusinessDataAnswer])
-        self.set_actions([AssignKnowledgeAssistant, AssignEnvBusinessAssistant, AssignFinalAnswer])
+        self._watch([AssignQuestionToTaskManager, GenerateEnvKnowledgeAnswer,
+                     GenerateEnvBusinessDataAnswer, ExecuteSql, GenerateChart])
+        self.set_actions([AssignKnowledgeAssistant, AssignEnvBusinessAssistant,
+                          AssignChartAssistant, AssignFinalAnswer])
 
 
 class AssignQuestionToTaskManager(Action):
@@ -236,7 +273,6 @@ class TaskStarter(Role):
 
 async def main(idea: str = '观澜河企坪断面的水温是多少？'):
     # '观澜河企坪断面的水温是多少？'
-    # '二氧化碳是什么？'
     # '什么是碳监测？'
     # '近一日的茅洲河水温变化折线图？'
     logger.info(idea)
@@ -248,6 +284,8 @@ async def main(idea: str = '观澜河企坪断面的水温是多少？'):
             TaskManager(),
             EnvKnowledgeAssistant(),
             EnvBusinessDataAssistant(),
+            EnvSqlDataAssistant(),
+            EnvChartAssistant(),
             FinalAnswerSpeaker(),
         ]
     )
