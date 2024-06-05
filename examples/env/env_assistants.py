@@ -73,6 +73,7 @@ class GenerateSql(Action):
 
 class ExecuteSql(Action):
     async def run(self, context):
+        # todo 倒序遍历
         sql_content = next((c.content for c in context if '```sql' in c.content), None)
         if sql_content:
             pattern = r'```sql(.*?)```'
@@ -250,8 +251,10 @@ class TaskManager(Role):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # self._set_react_mode(RoleReactMode.REACT, 3)
+
         self._watch([AssignQuestionToTaskManager, GenerateEnvKnowledgeAnswer,
                      GenerateEnvBusinessDataAnswer, ExecuteSql, GenerateChart])
+
         self.set_actions([AssignKnowledgeAssistant, AssignEnvBusinessAssistant,
                           AssignChartAssistant, AssignFinalAnswer])
 
@@ -271,7 +274,7 @@ class TaskStarter(Role):
         self.set_actions([AssignQuestionToTaskManager])
 
 
-async def main(idea: str = '观澜河企坪断面的水温是多少？'):
+async def main(idea: str = '近一日的茅洲河水温变化折线图？'):
     # '观澜河企坪断面的水温是多少？'
     # '什么是碳监测？'
     # '近一日的茅洲河水温变化折线图？'
