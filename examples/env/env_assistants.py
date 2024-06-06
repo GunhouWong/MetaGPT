@@ -1,4 +1,7 @@
+import ast
+import json
 import re
+from datetime import datetime
 
 import fire
 
@@ -129,23 +132,337 @@ class AssignEnvSqlDataAssistant(Action):
         return '使用SQL数据助手查询数据'
 
 
-class GenerateChart(Action):
+class ChartDataApiBase(Action):
+    CHART_OPTIONS: str = ""
+    PROMPT_TEMPLATE: str = """# 用户问题
+{question}
+
+# 需求
+根据用户问题生成数据接口 Python 代码
+
+# SQL
+```sql
+{sql}
+```
+
+# 提供函数
+DBUtil.select(sql: str)
+说明
+        :param sql: SQL
+        :return: list[dict]  dict 为每行的每个字段名和对应的值
+
+# 生成数据结构
+需要生成的图表为echarts, 其中接口返回的数据结构说明如下：
+```ts
+{options}
+```
+
+
+# 限制
+返回的数据必须符合数据结构要求。
+只返回函数体的代码即可，不需要定义函数名。
+直接返回数据对象，不需要转换为json字符串。
+函数名为 get_chart_data
+数据库返回的日期类型为 datetime 对象，必要时需要转换为字符串"""
+
+    def generate_sql(self):
+        return "select water_temperature, datetime from t_water where id = '23' order by datetime desc limit 24"
+
+    async def generate_chart_api_code(self, context, sql):
+        prompt = self.PROMPT_TEMPLATE.format(question=context[0].content, sql=sql, options=self.CHART_OPTIONS)
+        code = await self._aask(prompt)
+        return code
+
+    def extract_md_python_code(self, md: str):
+        pattern = r'```python(.*?)```'
+        code_str = re.findall(pattern, md, re.DOTALL)
+        return code_str[0] if len(code_str) > 0 else None
+
+    def extract_function(self, code_str, function_name):
+        # 解析代码字符串为抽象语法树
+        tree = ast.parse(code_str)
+
+        # 遍历抽象语法树，查找目标函数
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == function_name:
+                # 找到目标函数，返回其源代码字符串
+                function_code = ast.get_source_segment(code_str, node)
+                return function_code
+
+        # 如果未找到目标函数，则返回空字符串或抛出异常等
+        return ""
+
+    def run_python_code(self, code):
+        class DBUtil:
+            @staticmethod
+            def select(sql):
+                return [
+                    {
+                        'water_temperature': 12.3,
+                        'datetime': datetime.strptime('2024-06-04 00:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 13.7,
+                        'datetime': datetime.strptime('2024-06-04 01:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 14.2,
+                        'datetime': datetime.strptime('2024-06-04 02:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 15.5,
+                        'datetime': datetime.strptime('2024-06-04 03:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 16.8,
+                        'datetime': datetime.strptime('2024-06-04 04:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 17.2,
+                        'datetime': datetime.strptime('2024-06-04 05:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 18.6,
+                        'datetime': datetime.strptime('2024-06-04 06:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 19.1,
+                        'datetime': datetime.strptime('2024-06-04 07:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 20.4,
+                        'datetime': datetime.strptime('2024-06-04 08:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 21.8,
+                        'datetime': datetime.strptime('2024-06-04 09:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 22.3,
+                        'datetime': datetime.strptime('2024-06-04 10:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 23.7,
+                        'datetime': datetime.strptime('2024-06-04 11:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 24.2,
+                        'datetime': datetime.strptime('2024-06-04 12:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 25.4,
+                        'datetime': datetime.strptime('2024-06-04 13:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 24.8,
+                        'datetime': datetime.strptime('2024-06-04 14:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 23.5,
+                        'datetime': datetime.strptime('2024-06-04 15:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 22.1,
+                        'datetime': datetime.strptime('2024-06-04 16:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 21.6,
+                        'datetime': datetime.strptime('2024-06-04 17:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 20.3,
+                        'datetime': datetime.strptime('2024-06-04 18:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 19.9,
+                        'datetime': datetime.strptime('2024-06-04 19:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 18.5,
+                        'datetime': datetime.strptime('2024-06-04 20:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 17.0,
+                        'datetime': datetime.strptime('2024-06-04 21:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 16.5,
+                        'datetime': datetime.strptime('2024-06-04 22:00:00', '%Y-%m-%d %H:%M:%S')
+                    },
+                    {
+                        'water_temperature': 15.2,
+                        'datetime': datetime.strptime('2024-06-04 23:00:00', '%Y-%m-%d %H:%M:%S')
+                    }
+                ]
+        g = {
+            "DBUtil": DBUtil
+        }
+        exec(code, g)
+        return g['result']
+
+    def generate_chart(self, code):
+        code = self.extract_md_python_code(code)
+        code = self.extract_function(code, 'get_chart_data')
+        result = self.run_python_code(code + "\nresult = get_chart_data()")
+        print("接口代码：")
+        print(code)
+        print("代码生成数据")
+        print(json.dumps(result, ensure_ascii=False))
+        return '根据用户需求生成的图表 API：https://chart.bovo.com/data/1222232'
+
     async def run(self, context):
-        return ("根据用户问题，生成的图表如下：\n"
-                "https://chart.bovo.com/1222232")
+
+        sql = self.generate_sql()
+        code = await self.generate_chart_api_code(context, sql)
+
+        return self.generate_chart(code)
+
+
+class GenerateLineChartDataApi(ChartDataApiBase):
+    CHART_OPTIONS: str = """interface LineBarOptions {{
+  title: {
+    text: string // 标题
+  },
+  legend: {
+    show: boolean  // 是否显示图例
+    data: string[] // 图例的数据数组。数组项通常为一个字符串，每一项代表一个系列的 name。
+  },
+  tooltip: {
+    show: boolean // 是否显示提示框
+    trigger: 'axis' | 'none' // 'axis' 坐标轴触发，主要在柱状图，折线图等会使用类目轴的图表中使用。 'none' 什么都不触发。
+  },
+  xAxis: {{ // 直角坐标系 grid 中的 x 轴
+    type: 'category' // 'category' 类目轴，适用于离散的类目数据。
+    data: string[]  // 类目数据，在类目轴（type: 'category'）中有效。
+  }},
+  yAxis: {{ // 直角坐标系 grid 中的 y 轴
+    type: 'value' // 'value' 数值轴，适用于连续数据。
+  }},
+  series: [
+    {{
+      name: string //  系列名称，用于tooltip的显示，legend 的图例筛选
+      data: number[]  // 系列中的数据内容数组。数组项通常为具体的数据项。
+      type: 'line' // 'line' 折线图
+    }}
+  ]
+}}"""
+
+
+class GenerateBarChartDataApi(ChartDataApiBase):
+    CHART_OPTIONS: str = """interface LineBarOptions {{
+      title: {
+        text: string // 标题
+      },
+      legend: {
+        show: boolean  // 是否显示图例
+        data: string[] // 图例的数据数组。数组项通常为一个字符串，每一项代表一个系列的 name。
+      },
+      tooltip: {
+        show: boolean // 是否显示提示框
+        trigger: 'axis' | 'none' // 'axis' 坐标轴触发，主要在柱状图，折线图等会使用类目轴的图表中使用。 'none' 什么都不触发。
+      },
+      xAxis: {{ // 直角坐标系 grid 中的 x 轴
+        type: 'category' // 'category' 类目轴，适用于离散的类目数据。
+        data: string[]  // 类目数据，在类目轴（type: 'category'）中有效。
+      }},
+      yAxis: {{ // 直角坐标系 grid 中的 y 轴
+        type: 'value' // 'value' 数值轴，适用于连续数据。
+      }},
+      series: [
+        {{
+          name: string //  系列名称，用于tooltip的显示，legend 的图例筛选
+          data: number[]  // 系列中的数据内容数组。数组项通常为具体的数据项。
+          type: 'bar' // 'bar' 柱状图
+        }}
+      ]
+    }}"""
+
+
+class GeneratePieChartDataApi(ChartDataApiBase):
+    async def run(self, context: str):
+        return """根据用户需求生成的接口代码如下：
+```js
+option = {
+  title: {
+    text: 'Referer of a Website',
+    subtext: 'Fake Data',
+    left: 'center'
+  },
+  tooltip: {
+    trigger: 'item'
+  },
+  legend: {
+    orient: 'vertical',
+    left: 'left'
+  },
+  series: [
+    {
+      name: 'Access From',
+      type: 'pie',
+      radius: '50%',
+      data: [
+        { value: 1048, name: 'Search Engine' },
+        { value: 735, name: 'Direct' },
+        { value: 580, name: 'Email' },
+        { value: 484, name: 'Union Ads' },
+        { value: 300, name: 'Video Ads' }
+      ],
+      emphasis: {
+        itemStyle: {
+          shadowBlur: 10,
+          shadowOffsetX: 0,
+          shadowColor: 'rgba(0, 0, 0, 0.5)'
+        }
+      }
+    }
+  ]
+};
+```"""
+
+
+class ChartDataApiCodeGenerator(Role):
+    name: str = '张戴马'
+    profile: str = "环境质量图表数据接口生成助手"
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._set_react_mode(RoleReactMode.REACT, 1)
+        self._watch([AssignChartDataApiGenerator])
+        self.set_actions([GenerateLineChartDataApi, GenerateBarChartDataApi, GeneratePieChartDataApi])
+
+
+class GenerateChart(Action):
+    PROMPT_TEMPLATE: str = """# Context:
+    {context}
+
+# 要求
+1. 请根据 Context 内容获取图表的名称，如果不存在，请根据内容生成。
+2. 仅需要回答生成的名称，不需要添加其他的信息。"""
+
+    async def run(self, context):
+        prompt = self.PROMPT_TEMPLATE.format(context=context)
+
+        rsp = await self._aask(prompt)
+        return (f"已根据用户的提问生成图表：chart[{rsp}](1222232)")
+
+
+
+class AssignChartDataApiGenerator(Action):
+    async def run(self, context: str):
+        return '使用环境质量图表数据接口生成助手'
 
 
 class EnvChartAssistant(Role):
     name: str = '周图镖'
     profile: str = "环境质量图表生成助手"
-    constraints: str = ("1. 如果没有数据需要先从 AssignEnvSqlDataAssistant 查询得到数据。 "
-                        "2. 再调用 GenerateChart 生成图表。 "
-                        "3. 如果已经有数据，请直接选择 GenerateChart")
+    constraints: str = ("1. 如果未调用过 环境质量图表数据接口生成助手，选择 AssignChartDataApiCodeGenerator 生成数据 API\n"
+                        "2. 如果已经存在图表数据 API，请选择 GenerateChart 进行生成图表")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._watch([AssignChartAssistant])
-        self.set_actions([AssignEnvSqlDataAssistant, GenerateChart])
+        # self._set_react_mode(RoleReactMode.REACT, 2)
+        self._watch([AssignChartAssistant, GenerateLineChartDataApi, GenerateBarChartDataApi, GeneratePieChartDataApi])
+        self.set_actions([AssignChartDataApiGenerator, GenerateChart])
 
 
 class QueryEmbeddedEnvBusinessData(Action):
@@ -194,19 +511,38 @@ class EnvBusinessDataAssistant(Role):
 class FinalAnswerSpeaker(Role):
     name: str = "张发炎"
     profile: str = "问题回答助手"
+    constraints: str = "跟图表相关的回答请选择 ChartFinalAnswer"
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._watch([AssignFinalAnswer])
-        self.set_actions([FinalAnswer])
+        self._watch([AssignFinalAnswer, GenerateChart])
+        self.set_actions([FinalAnswer, ChartFinalAnswer])
+
+
+class ChartFinalAnswer(Action):
+    PROMPT_TEMPLATE: str = """假设你是一个图表回答助手，下面的信息已经包含可以回答用户的信息，请根据以下信息尽可能地回答Human的问题。
+
+
+# 说明
+1. 请假设自己可以输出图表。
+2. 此标签格式为图表：`chart[描述](id)`，回答时直接带上 Context 中的图表标签，不要修改格式，不要忽略 id。
+3. 图表标签会在输出后在前端协助你渲染成图表。
+
+# Context
+{context}"""
+
+    async def run(self, context):
+        prompt = self.PROMPT_TEMPLATE.format(context=context)
+
+        rsp = await self._aask(prompt)
+        return rsp
 
 
 class FinalAnswer(Action):
     PROMPT_TEMPLATE: str = """Context: 
 {context}
 
-请根据 Context 回答 Human 的问题:
-    """
+请根据 Context 回答 Human 的问题。"""
 
     async def run(self, context):
         prompt = self.PROMPT_TEMPLATE.format(context=context)
@@ -245,15 +581,15 @@ class TaskManager(Role):
     goal: str = '把用户输入的问题分解给对应的角色来处理。'
     constraints: str = ('1. 用户问的是常规的环保类知识，请选择 AssignKnowledgeAssistant\n'
                         '2. 用户问的是某个特定的河流，监测站，统计等信息，请选择 AssignEnvBusinessAssistant\n'
-                        '3. Context 中包含了 Human 问题的答案，请选择 AssignFinalAnswer\n'
-                        '4. 如果是图表类的问题，请选择 AssignChartAssistant')
+                        '3. 图表类的问题，未生成图表请选择 AssignChartAssistant 生成\n'
+                        '4. history 中包含了 Human 问题的答案，请选择 AssignFinalAnswer')
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # self._set_react_mode(RoleReactMode.REACT, 3)
 
         self._watch([AssignQuestionToTaskManager, GenerateEnvKnowledgeAnswer,
-                     GenerateEnvBusinessDataAnswer, ExecuteSql, GenerateChart])
+                     GenerateEnvBusinessDataAnswer, ExecuteSql])
 
         self.set_actions([AssignKnowledgeAssistant, AssignEnvBusinessAssistant,
                           AssignChartAssistant, AssignFinalAnswer])
@@ -274,10 +610,12 @@ class TaskStarter(Role):
         self.set_actions([AssignQuestionToTaskManager])
 
 
-async def main(idea: str = '近一日的茅洲河水温变化折线图？'):
+async def main(idea: str = '观澜河企坪断面的水温是多少？'):
     # '观澜河企坪断面的水温是多少？'
     # '什么是碳监测？'
     # '近一日的茅洲河水温变化折线图？'
+    # '近一日的茅洲河水温变化折线图？'
+    # '提供近一日的茅洲河水温变化柱状图，x轴的时间格式为：yy-MM-dd HH'
     logger.info(idea)
 
     team = Team()
@@ -289,6 +627,7 @@ async def main(idea: str = '近一日的茅洲河水温变化折线图？'):
             EnvBusinessDataAssistant(),
             EnvSqlDataAssistant(),
             EnvChartAssistant(),
+            ChartDataApiCodeGenerator(),
             FinalAnswerSpeaker(),
         ]
     )
