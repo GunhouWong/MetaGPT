@@ -1,22 +1,41 @@
 import ast
+import csv
+import io
 import json
 import re
-from datetime import datetime
 
+import cx_Oracle
 import fire
 
+from examples.env.db_utils import DbUtil
 from metagpt.actions import Action
 from metagpt.logs import logger
 from metagpt.roles import Role
 from metagpt.roles.role import RoleReactMode
 from metagpt.team import Team
 
+db_config = {
+    'user': 'U_EMDC_BIZ_SZ_202306',
+    'password': 'U_EMDC_BIZ_SZ_202306',
+    'dsn': '192.168.3.68:1521/SZEPB',
+    'mincached': 1,
+    'maxcached': 20,
+    'maxconnections': 100
+}
+
+cx_Oracle.init_oracle_client(lib_dir=r"D:\Program Files\instantclient_11_2")
+
 
 class GenerateEnvKnowledgeAnswer(Action):
-    PROMPT_TEMPLATE: str = """Context: 
+    PROMPT_TEMPLATE: str = """# Context 
 {context}
 
-请根据 Context 回答 Human 的问题，Context 中不存在的信息请回答不知道:"""
+# 要求
+请根据 Context 内容回答 Human 的问题。
+
+# 限制
+1. Context 中不存在的信息请回答不知道。
+2. 直接回答问题即可，不要添加其他额外的信息。"""
 
     async def run(self, context):
         prompt = self.PROMPT_TEMPLATE.format(context=context)
@@ -42,7 +61,7 @@ class EnvKnowledgeAssistant(Role):
     name: str = '黄智识'
     profile: str = "环境质量知识助手"
     goal: str = '回答用户的一些环保相关的知识'
-    constraints: str = '可以先使用 SearchEnvKnowledge 对知识进行检索，然后通过 GenerateEnvKnowledgeAnswer 生成回答'
+    constraints: str = '先使用 SearchEnvKnowledge 对知识进行检索，然后通过 GenerateEnvKnowledgeAnswer 生成回答'
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -52,10 +71,14 @@ class EnvKnowledgeAssistant(Role):
 
 
 class GenerateEnvBusinessDataAnswer(Action):
-    PROMPT_TEMPLATE: str = """
-    Context: {context}
-    请根据 Context 回答 Human 的问题:
-    """
+    PROMPT_TEMPLATE: str = """# Context:
+{context}
+
+# 要求
+请根据 Context 回答 Human 的问题。
+
+# 限制
+1. 直接回答问题，不要添加其他信息。"""
 
     async def run(self, context):
         prompt = self.PROMPT_TEMPLATE.format(context=context)
@@ -65,13 +88,83 @@ class GenerateEnvBusinessDataAnswer(Action):
         return rsp
 
 
-class GenerateSql(Action):
+class QueryDatabaseEnvBusinessData(Action):
+    CONSTRAINTS: str = ""
+    PROMPTS_TLP: str = """# Context
+{context}
+
+请根据以下表信息，生成 Human 需求的 SQL。
+
+{table_info}
+
+# 要求
+1. 查询条件中必须包含日期和监测点位或者行政区名称。
+2. CDMC 使用模糊查询，参数只包含名称即可，不要带监测站等描述，假设：用户提供了“荔园监测站”只需要使用“荔园”。
+3. 数据库为 Oracle 11g，请不要写 FETCH FIRST, LIMIT 之类不兼容的语法
+4. 查询条件里的日期需要 TO_DATE
+5. 只查询需要的字段，不要查询 *
+6. 如果出现截至目前之类的用语，请查询最新的数据，用时间倒叙查最新的即可。
+
+# 约束
+{constraints}
+"""
+    TABLE_PROMPTS: str = ""
+
+    async def generate_sql(self, context):
+        prompt = self.PROMPTS_TLP.format(context=context, table_info=self.TABLE_PROMPTS, constraints=self.CONSTRAINTS)
+        sql = await self._aask(prompt)
+        return sql
+
+    def extract_sql(self, content: str):
+        if content.upper().startswith("SELECT"):
+            return content
+        pattern = r'```sql(.*?)```'
+        code_str = re.findall(pattern, content, re.DOTALL)
+        return code_str[0].rstrip().rstrip(";") if len(code_str) > 0 else None
+
+    def exec_aql(self, sql):
+        db_util = DbUtil(cx_Oracle, **db_config)
+        data = db_util.select(sql)
+        if len(data) > 10:
+            raise Exception("数据太多了")
+        return data
+
+    def list_of_dicts_to_csv_text(self, list_of_dicts: list[dict]):
+        if not list_of_dicts:
+            return ''
+
+        keys = list_of_dicts[0].keys()
+        output = io.StringIO()
+
+        writer = csv.writer(output)
+        writer.writerow(keys)
+        for item in list_of_dicts:
+            writer.writerow(item.values())
+
+        return output.getvalue()
+
     async def run(self, context):
-        return (f'根据用户问题：{context[0].content}\n'
-                "生成的数据查询SQL：\n"
-                "```sql\n"
-                "select water_temperature, datetime from t_water where id = '23' order by datetime desc limit 24\n"
-                "```")
+        sql = await self.generate_sql(context)
+        sql = self.extract_sql(sql)
+        data = self.exec_aql(sql)
+        csv = self.list_of_dicts_to_csv_text(data)
+        return ("根据 Human 的需求，查到的数据如下：\n"
+                "```csv\n"
+                f"{csv}\n"
+                f"```")
+
+#
+# class GenerateSql(QueryDatabaseEnvBusinessData):
+#     async def run(self, context):
+#         sql = await self.generate_sql(context)
+#         sql = self.extract_sql(sql)
+#         if sql:
+#             return sql
+#         return (f'根据用户问题：{context[0].content}\n'
+#                 "生成的数据查询SQL：\n"
+#                 "```sql\n"
+#                 "select water_temperature, datetime from t_water where id = '23' order by datetime desc limit 24\n"
+#                 "```")
 
 
 class ExecuteSql(Action):
@@ -113,43 +206,67 @@ class ExecuteSql(Action):
 15.2,2024-06-04 23:00:00""")
 
 
-class EnvSqlDataAssistant(Role):
-    name: str = '周sq'
-    profile: str = "环境质量数据库查询助手"
-    goal: str = "根据用户需求生成数据库查询SQL，再执行获得数据"
-    constraints: str = ("1. 如果 Context 不存在SQL，选择 GenerateSql 进行生成 SQL\n"
-                        "2. 如果 Context 中已经存在可执行 SQL，选择 ExecuteSql")
+# class EnvSqlDataAssistant(Role):
+#     name: str = '周sq'
+#     profile: str = "环境质量数据库查询助手"
+#     goal: str = "根据用户需求生成数据库查询SQL，再执行获得数据"
+#     constraints: str = ("1. 如果 Context 不存在SQL，选择 GenerateSql 进行生成 SQL\n"
+#                         "2. 如果 Context 中已经存在可执行 SQL，选择 ExecuteSql")
+#
+#     def __init__(self, **kwargs):
+#         super().__init__(**kwargs)
+#         self._set_react_mode(RoleReactMode.REACT, 2)
+#         self._watch([AssignEnvSqlDataAssistant])
+#         self.set_actions([GenerateSql, ExecuteSql])
+#
+#
+# class AssignEnvSqlDataAssistant(Action):
+#     async def run(self, context: str):
+#         return '使用SQL数据助手查询数据'
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self._set_react_mode(RoleReactMode.REACT, 2)
-        self._watch([AssignEnvSqlDataAssistant])
-        self.set_actions([GenerateSql, ExecuteSql])
+
+class QueryAirEnvBusinessData(QueryDatabaseEnvBusinessData):
+    CONSTRAINTS: str = "1. 必要时请限制查询的数据量"
+    TABLE_PROMPTS: str = """# 表及字段
+## 表
+T_JCSJZX_HJKQ_PJJG 环境空气评价结果（空气质量）
+
+## 字段
+CDMC 监测点位（站点）
+SSXZQ 行政区名称
+JCJSRQ 监测日期，DATE 类型
+PJLX 评价类型，可选值：DAY 日数据、MONTH 月数据、JD 季度、YEAR 年、 LJ 累计，截至目前等问题用 LJ 
+QYLX 可选值：CD 监测点位（站点）、CITY 城市
+KQZLLB 空气质量类别
+AQI 空气质量指数
+SO2
+NO2
+PM10
+CO
+O3_8H
+PM25
+"""
 
 
-class AssignEnvSqlDataAssistant(Action):
-    async def run(self, context: str):
-        return '使用SQL数据助手查询数据'
-
-
-class ChartDataApiBase(Action):
+class ChartDataApiBase(QueryAirEnvBusinessData):
     CHART_OPTIONS: str = ""
+    CONSTRAINTS: str = ""
     PROMPT_TEMPLATE: str = """# 用户问题
 {question}
 
 # 需求
 根据用户问题生成数据接口 Python 代码
 
-# SQL
+# 数据查询 SQL
 ```sql
 {sql}
 ```
 
 # 提供函数
-DBUtil.select(sql: str)
+db_util.select(sql)
 说明
-        :param sql: SQL
-        :return: list[dict]  dict 为每行的每个字段名和对应的值
+    :param sql: SQL
+    :return: list[dict]  dict 为每行的每个字段名和对应的值
 
 # 生成数据结构
 需要生成的图表为echarts, 其中接口返回的数据结构说明如下：
@@ -160,13 +277,13 @@ DBUtil.select(sql: str)
 
 # 限制
 返回的数据必须符合数据结构要求。
-只返回函数体的代码即可，不需要定义函数名。
+提供的SQL为Oracle类型的，尽量不要修改。
 直接返回数据对象，不需要转换为json字符串。
 函数名为 get_chart_data
 数据库返回的日期类型为 datetime 对象，必要时需要转换为字符串"""
 
-    def generate_sql(self):
-        return "select water_temperature, datetime from t_water where id = '23' order by datetime desc limit 24"
+    # def generate_sql(self):
+    #     return "select water_temperature, datetime from t_water where id = '23' order by datetime desc limit 24"
 
     async def generate_chart_api_code(self, context, sql):
         prompt = self.PROMPT_TEMPLATE.format(question=context[0].content, sql=sql, options=self.CHART_OPTIONS)
@@ -294,8 +411,11 @@ DBUtil.select(sql: str)
                         'datetime': datetime.strptime('2024-06-04 23:00:00', '%Y-%m-%d %H:%M:%S')
                     }
                 ]
+
+        from datetime import datetime
         g = {
-            "DBUtil": DBUtil
+            "db_util": DbUtil(cx_Oracle, **db_config),
+            "datetime": datetime
         }
         exec(code, g)
         return g['result']
@@ -312,7 +432,8 @@ DBUtil.select(sql: str)
 
     async def run(self, context):
 
-        sql = self.generate_sql()
+        sql = await self.generate_sql(context)
+        sql = self.extract_sql(sql)
         code = await self.generate_chart_api_code(context, sql)
 
         return self.generate_chart(code)
@@ -446,7 +567,6 @@ class GenerateChart(Action):
         return (f"已根据用户的提问生成图表：chart[{rsp}](1222232)")
 
 
-
 class AssignChartDataApiGenerator(Action):
     async def run(self, context: str):
         return '使用环境质量图表数据接口生成助手'
@@ -495,23 +615,24 @@ class QueryEmbeddedEnvBusinessData(Action):
 (24)生化需氧量,1.3mg/L"""
 
 
+
 class EnvBusinessDataAssistant(Role):
     name: str = "张小业"
     profile: str = "环境质量业务数据助手"
     goal: str = "根据用户的需求，先查询业务数据，再根据查询得到的业务数据进行生成问题的答案"
-    constraints: str = '如果已经得到用户所需要的答案，请中止运行。'
+    # constraints: str = '如果已经得到用户所需要的答案，返回-1。'
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._set_react_mode(RoleReactMode.REACT, 2)
         self._watch([AssignEnvBusinessAssistant])
-        self.set_actions([QueryEmbeddedEnvBusinessData, GenerateEnvBusinessDataAnswer])
+        self.set_actions([QueryAirEnvBusinessData, GenerateEnvBusinessDataAnswer])
 
 
 class FinalAnswerSpeaker(Role):
     name: str = "张发炎"
     profile: str = "问题回答助手"
-    constraints: str = "跟图表相关的回答请选择 ChartFinalAnswer"
+    constraints: str = "1. 跟图表（如柱状图，折线图，饼状图等）相关的回答请选择 ChartFinalAnswer \n2. 其他问题请选择 FinalAnswer"
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -539,10 +660,14 @@ class ChartFinalAnswer(Action):
 
 
 class FinalAnswer(Action):
-    PROMPT_TEMPLATE: str = """Context: 
+    PROMPT_TEMPLATE: str = """# Context
 {context}
 
-请根据 Context 回答 Human 的问题。"""
+# 要求
+请根据 Context 回答 Human 的问题
+
+# 限制
+1. 直接回答 Human，不要添加其他信息"""
 
     async def run(self, context):
         prompt = self.PROMPT_TEMPLATE.format(context=context)
@@ -566,7 +691,7 @@ class AssignChartAssistant(Action):
 class AssignEnvBusinessAssistant(Action):
 
     async def run(self, context: str):
-        return '使用环境质量业务数据助手回答问题'
+        return '使用环境质量业务数据助手查询数据'
 
 
 class AssignFinalAnswer(Action):
@@ -603,19 +728,22 @@ class AssignQuestionToTaskManager(Action):
 class TaskStarter(Role):
     name: str = '黄总'
     profile: str = "任务下派者"
-    goal: str = '把用户输入的问题提供给任务管理者进行管理。'
+    goal: str = '把用户输入的问题提供给 AssignQuestionToTaskManager。'
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.set_actions([AssignQuestionToTaskManager])
 
 
-async def main(idea: str = '观澜河企坪断面的水温是多少？'):
-    # '观澜河企坪断面的水温是多少？'
+async def main(idea: str = '截至目前大鹏新区各项污染物浓度为多少？'):
     # '什么是碳监测？'
-    # '近一日的茅洲河水温变化折线图？'
-    # '近一日的茅洲河水温变化折线图？'
-    # '提供近一日的茅洲河水温变化柱状图，x轴的时间格式为：yy-MM-dd HH'
+    # '2020-02-12 梅沙监测站的日空气质量等级'
+    # '2020-02-12 大鹏新区的日空气质量等级是多少'
+    # '2020-02-12 大鹏新区的日空气 AQI 是多少？'
+    # '大鹏新区 2020-02-01 至 2020-02-29 的空气日数据 AQI 变化趋势折线图'
+    # '大鹏新区 2020-02-01 至 2020-02-29 的空气日数据 SO2 变化趋势折线图'
+    # '大鹏新区 2020-02-01 至 2020-02-29 的空气日数据 SO2 柱状图'
+    # '截至目前大鹏新区各项污染物浓度为多少？'
     logger.info(idea)
 
     team = Team()
@@ -625,7 +753,7 @@ async def main(idea: str = '观澜河企坪断面的水温是多少？'):
             TaskManager(),
             EnvKnowledgeAssistant(),
             EnvBusinessDataAssistant(),
-            EnvSqlDataAssistant(),
+            # EnvSqlDataAssistant(),
             EnvChartAssistant(),
             ChartDataApiCodeGenerator(),
             FinalAnswerSpeaker(),
