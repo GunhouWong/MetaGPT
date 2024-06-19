@@ -13,6 +13,7 @@ gitignore-parser==0.1.9
 gymnasium==0.29.1
 
 loguru==0.6.0
+bovollm
 # cx-Oracle~=8.3.0
 
 
